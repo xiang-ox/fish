@@ -12,7 +12,7 @@ const CONFIG = {
     SIZE_MULTIPLIER: 1.08, // 每级大小倍数
     FISH_PER_LEVEL: 5, // 合成所需鱼的数量
     MAX_LEVEL: 30, // 最大等级
-    FISH_INTERVAL: 1, // 生成鱼的间隔（秒）
+    FISH_INTERVAL: 60, // 生成鱼的间隔（秒）
     MERGE_ANIMATION_DURATION: 500, // 合成动画时长（毫秒）
     POPUP_DURATION: 2000, // 升级弹窗显示时长（毫秒）
     HISTORY_DAYS: 30, // 历史记录保存天数
