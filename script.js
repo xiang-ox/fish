@@ -58,19 +58,36 @@ class GameState {
         
         if (saved && lastSaveDate === today) {
             const data = JSON.parse(saved);
-            // 累计安静时间每天从00:00开始，不加载之前的数据
-            this.totalQuietTime = 0;
+            // 同一天内刷新或关闭重启，保留所有数据
+            this.totalQuietTime = data.totalQuietTime || 0;
             this.level = data.level || 1;
             this.fishCount = data.fishCount || 0;
+            // 加载保存的鱼数据
+            this.savedFishes = data.fishes || [];
         }
+        // 如果是新的一天，不加载任何数据，保持默认值（等级=1，鱼的数量=0，累计安静时间=0）
     }
 
     // 保存到本地存储
     saveToStorage() {
+        // 保存鱼的基本数据（不包括DOM元素）
+        const fishesData = this.fishes.map(fish => ({
+            id: fish.id,
+            level: fish.level,
+            type: fish.type,
+            size: fish.size,
+            x: fish.x,
+            y: fish.y,
+            vx: fish.vx,
+            vy: fish.vy,
+            speed: fish.speed
+        }));
+        
         const data = {
             totalQuietTime: this.totalQuietTime,
             level: this.level,
             fishCount: this.fishCount,
+            fishes: fishesData,
             lastSaveDate: new Date().toDateString()
         };
         localStorage.setItem('quietFishGameState', JSON.stringify(data));
@@ -339,6 +356,8 @@ class UIManager {
         this.game = game;
         this.gameState = gameState;
         this.elements = {};
+        this.isLocked = false;
+        this.savedButtonState = null;
         this.initElements();
         this.bindEvents();
     }
@@ -361,6 +380,9 @@ class UIManager {
         this.elements.historyBtn = document.getElementById('history-btn');
         this.elements.settingsBtn = document.getElementById('settings-btn');
         this.elements.fullscreenBtn = document.getElementById('fullscreen-btn');
+        this.elements.lockBtn = document.getElementById('lock-btn');
+        this.elements.lockIcon = document.getElementById('lock-icon');
+        this.elements.lockText = document.getElementById('lock-text');
         
         // 弹窗元素
         this.elements.upgradePopup = document.getElementById('upgrade-popup');
@@ -414,6 +436,16 @@ class UIManager {
         // 全屏按钮
         this.elements.fullscreenBtn.addEventListener('click', () => {
             this.toggleFullscreen();
+        });
+
+        // 锁定/解锁按钮
+        this.elements.lockBtn.addEventListener('click', () => {
+            this.toggleLock();
+        });
+
+        // 监听解锁成功事件
+        document.addEventListener('unlockSuccess', () => {
+            this.unlockControls();
         });
 
         // 关闭历史记录
@@ -471,6 +503,13 @@ class UIManager {
     }
 
     updateButtons() {
+        if (this.isLocked) {
+            // 锁定状态下，所有按钮保持禁用
+            this.elements.startBtn.disabled = true;
+            this.elements.pauseBtn.disabled = true;
+            return;
+        }
+        
         if (this.gameState.isRunning) {
             this.elements.startBtn.disabled = true;
             this.elements.pauseBtn.disabled = false;
@@ -569,6 +608,61 @@ class UIManager {
         }
     }
 
+    toggleLock() {
+        if (this.isLocked) {
+            // 已经锁定，需要输入密码解锁
+            if (typeof showUnlockModal === 'function') {
+                showUnlockModal();
+            }
+        } else {
+            // 未锁定，直接锁定
+            this.lockControls();
+        }
+    }
+
+    lockControls() {
+        this.isLocked = true;
+        
+        // 更新按钮样式
+        this.elements.lockBtn.classList.add('locked');
+        this.elements.lockIcon.textContent = '🔒';
+        this.elements.lockText.textContent = '解锁';
+        
+        // 禁用左侧区域所有按钮
+        this.elements.startBtn.disabled = true;
+        this.elements.pauseBtn.disabled = true;
+        this.elements.resetBtn.disabled = true;
+        this.elements.historyBtn.disabled = true;
+        this.elements.settingsBtn.disabled = true;
+        this.elements.fullscreenBtn.disabled = true;
+        this.elements.thresholdSlider.disabled = true;
+        
+        // 保存当前按钮状态以便恢复
+        this.savedButtonState = {
+            startBtnDisabled: this.elements.startBtn.disabled,
+            pauseBtnDisabled: this.elements.pauseBtn.disabled
+        };
+    }
+
+    unlockControls() {
+        this.isLocked = false;
+        
+        // 更新按钮样式
+        this.elements.lockBtn.classList.remove('locked');
+        this.elements.lockIcon.textContent = '🔓';
+        this.elements.lockText.textContent = '解锁';
+        
+        // 恢复按钮状态，根据游戏状态
+        this.elements.thresholdSlider.disabled = false;
+        this.elements.resetBtn.disabled = false;
+        this.elements.historyBtn.disabled = false;
+        this.elements.settingsBtn.disabled = false;
+        this.elements.fullscreenBtn.disabled = false;
+        
+        // 调用updateButtons来正确更新开始/暂停按钮状态
+        this.updateButtons();
+    }
+
     addFishToTank(fish) {
         this.elements.fishTank.appendChild(fish.element);
     }
@@ -610,21 +704,13 @@ class Game {
         this.uiManager.elements.fishTank.addEventListener('click', this.handleTankClick);
     }
 
-    // 网页刷新或重新打开时重置鱼的条数
+    // 网页刷新或重新打开时恢复鱼的条数
     resetFishCountOnLoad() {
-        // 重置鱼的条数和相关状态
-        this.gameState.fishCount = 0;
+        // 重置本次安静时间和倒计时
         this.gameState.currentQuietTime = 0;
         this.gameState.nextFishCountdown = CONFIG.FISH_INTERVAL;
         
-        // 清理鱼和鱼食
-        this.gameState.fishes.forEach(fish => {
-            if (fish.element && fish.element.parentNode) {
-                fish.element.parentNode.removeChild(fish.element);
-            }
-        });
-        this.gameState.fishes = [];
-        
+        // 清理鱼食
         this.gameState.foods.forEach(food => {
             if (food.element && food.element.parentNode) {
                 food.element.parentNode.removeChild(food.element);
@@ -632,7 +718,44 @@ class Game {
         });
         this.gameState.foods = [];
         
-        // 保存状态（保留等级和累计时间）
+        // 恢复之前保存的鱼
+        if (this.gameState.savedFishes && this.gameState.savedFishes.length > 0) {
+            const tank = this.uiManager.elements.fishTank;
+            
+            this.gameState.savedFishes.forEach(fishData => {
+                // 创建鱼对象
+                const fish = new Fish(
+                    fishData.id,
+                    fishData.level,
+                    fishData.type,
+                    fishData.size,
+                    tank.clientWidth,
+                    tank.clientHeight
+                );
+                
+                // 恢复鱼的位置和速度
+                fish.x = fishData.x;
+                fish.y = fishData.y;
+                fish.vx = fishData.vx;
+                fish.vy = fishData.vy;
+                fish.speed = fishData.speed;
+                
+                // 更新DOM位置
+                fish.element.style.left = `${fish.x}%`;
+                fish.element.style.top = `${fish.y}%`;
+                
+                this.gameState.fishes.push(fish);
+                this.uiManager.addFishToTank(fish);
+            });
+            
+            // 更新鱼计数器
+            this.fishIdCounter = Math.max(...this.gameState.savedFishes.map(f => f.id), 0) + 1;
+            
+            // 清除已加载的保存数据
+            this.gameState.savedFishes = [];
+        }
+        
+        // 保存状态
         this.gameState.saveToStorage();
     }
 
